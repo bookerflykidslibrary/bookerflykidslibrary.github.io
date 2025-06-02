@@ -6,7 +6,11 @@
   "dependencies": {
     "react": "^18.0.0",
     "react-dom": "^18.0.0",
+<<<<<<< HEAD
     "react-scripts": "^3.0.1"
+=======
+    "react-scripts": "5.0.1"
+>>>>>>> 969c9bb49f4e281a71233402ef75168f05f29ada
   },
   "devDependencies": {
     "gh-pages": "^6.0.0"
