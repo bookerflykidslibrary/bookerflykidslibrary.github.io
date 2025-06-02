@@ -1,0 +1,215 @@
+import React, { useState } from 'react';
+import axios from 'axios';
+import { Input } from '@/components/ui/input';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent } from '@/components/ui/card';
+import { Label } from '@/components/ui/label';
+import { createClient } from '@supabase/supabase-js';
+
+// Initialize Supabase client with hardcoded values for preview
+const supabaseUrl = 'https://sawufgyypmprtnuwvgnd.supabase.co';
+const supabaseAnonKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNhd3VmZ3l5cG1wcnRudXd2Z25kIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDg4NzQxMjcsImV4cCI6MjA2NDQ1MDEyN30.NNDNTPMc-RlyPaAlENrRfJo632LNu96Vq3ylP4E7sF0';
+
+const supabase = createClient(supabaseUrl, supabaseAnonKey);
+
+const BookEntry = () => {
+  const [isbn, setIsbn] = useState('');
+  const [bookInfo, setBookInfo] = useState({
+    ISBN13: '',
+    Min_Age: '',
+    Max_Age: '',
+    Title: '',
+    Authors: '',
+    Description: '',
+    Thumbnail: '',
+    Reviews: '',
+    Tags: '',
+  });
+  const [location, setLocation] = useState('Main Branch');
+  const [copyNumber, setCopyNumber] = useState(1);
+
+  // Fetch max copy number for given ISBN and location
+  const fetchCopyNumber = async (isbn13, loc) => {
+    if (!isbn13 || !loc) return 1;
+    try {
+      const { data: copies, error } = await supabase
+        .from('copyinfo')
+        .select('CopyNumber')
+        .eq('ISBN13', isbn13)
+        .eq('CopyLocation', loc);
+      if (error) {
+        console.error('Error fetching copies:', error);
+        return 1;
+      }
+      if (copies && copies.length > 0) {
+        const maxCopyNumber = Math.max(...copies.map(c => c.CopyNumber || 0));
+        return maxCopyNumber + 1;
+      }
+      return 1;
+    } catch (e) {
+      console.error('Exception fetching copies:', e);
+      return 1;
+    }
+  };
+
+  const fetchBookInfo = async () => {
+    if (!isbn.trim()) {
+      alert('Please enter a valid ISBN.');
+      return;
+    }
+    const { data: existing, error: existingError } = await supabase
+      .from('catalog')
+      .select('*')
+      .eq('ISBN13', isbn.trim());
+
+    if (existingError) {
+      console.error('Error fetching from catalog:', existingError);
+      alert('Failed to fetch catalog data.');
+      return;
+    }
+
+    if (existing && existing.length > 0) {
+      setBookInfo(existing[0]);
+      const cn = await fetchCopyNumber(existing[0].ISBN13, location.trim());
+      setCopyNumber(cn);
+    } else {
+      try {
+        const response = await axios.get(
+          `https://www.googleapis.com/books/v1/volumes?q=isbn:${isbn.trim()}`
+        );
+        const volume = response.data.items?.[0]?.volumeInfo;
+
+        if (volume) {
+          setBookInfo({
+            ISBN13: isbn.trim(),
+            Title: volume.title || '',
+            Authors: (volume.authors || []).join(', '),
+            Description: volume.description || '',
+            Thumbnail: volume.imageLinks?.thumbnail || '',
+            Min_Age: '10',
+            Max_Age: '18',
+            Reviews: volume.averageRating ? `Rating: ${volume.averageRating}` : '',
+            Tags: volume.categories ? volume.categories.join(', ') : '',
+          });
+          setCopyNumber(1);
+        } else {
+          alert('No book info found for this ISBN.');
+          setBookInfo({
+            ISBN13: isbn.trim(),
+            Min_Age: '',
+            Max_Age: '',
+            Title: '',
+            Authors: '',
+            Description: '',
+            Thumbnail: '',
+            Reviews: '',
+            Tags: '',
+          });
+          setCopyNumber(1);
+        }
+      } catch (err) {
+        console.error('Error fetching from Google Books API:', err);
+        alert('Failed to fetch book info from Google Books.');
+      }
+    }
+  };
+
+  const handleConfirm = async () => {
+    const trimmedLocation = location.trim();
+    if (!bookInfo.ISBN13 || !bookInfo.Title || !trimmedLocation) {
+      alert('Please fill in ISBN13, Title, and Location.');
+      return;
+    }
+
+    try {
+      const { error: catalogError } = await supabase.from('catalog').upsert(bookInfo);
+      if (catalogError) {
+        console.error('Error inserting into catalog:', catalogError);
+        alert('Failed to save catalog entry.');
+        return;
+      }
+
+      const cn = await fetchCopyNumber(bookInfo.ISBN13, trimmedLocation);
+
+      const { error: copyError } = await supabase.from('copyinfo').insert({
+        ISBN13: bookInfo.ISBN13,
+        CopyLocation: trimmedLocation,
+        CopyNumber: cn,
+      });
+
+      if (copyError) {
+        console.error('Error inserting into copyinfo:', copyError);
+        alert('Failed to save copy info.');
+        return;
+      }
+
+      alert('Book saved successfully!');
+      setCopyNumber(cn + 1);
+    } catch (e) {
+      console.error('Unexpected error:', e);
+      alert('An unexpected error occurred.');
+    }
+  };
+
+  const handleChange = (e) => {
+    const { name, value } = e.target;
+    setBookInfo((prev) => ({ ...prev, [name]: value }));
+  };
+
+  return (
+    <div className="p-4 max-w-2xl mx-auto w-full">
+      <Card className="bg-white shadow-xl rounded-2xl p-6 md:p-8">
+        <CardContent className="space-y-6">
+          <div className="space-y-2">
+            <Label className="text-lg font-semibold">Enter ISBN:</Label>
+            <div className="flex flex-col sm:flex-row gap-2">
+              <Input
+                value={isbn}
+                onChange={(e) => setIsbn(e.target.value)}
+                placeholder="e.g. 9780140449136"
+                className="flex-1"
+              />
+              <Button onClick={fetchBookInfo} className="bg-blue-600 text-white">
+                Fetch Info
+              </Button>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            {Object.entries(bookInfo).map(([key, value]) => (
+              <div key={key} className="space-y-1">
+                <Label className="capitalize">{key.replace(/_/g, ' ')}</Label>
+                <Input
+                  name={key}
+                  value={value}
+                  onChange={handleChange}
+                  placeholder={`Enter ${key}`}
+                />
+              </div>
+            ))}
+            <div className="space-y-1">
+              <Label>Location</Label>
+              <Input
+                name="location"
+                value={location}
+                onChange={(e) => setLocation(e.target.value)}
+                placeholder="Enter Location"
+              />
+            </div>
+          </div>
+
+          <div className="text-center pt-4">
+            <Button
+              onClick={handleConfirm}
+              className="w-full sm:w-auto bg-green-600 hover:bg-green-700 text-white px-6 py-2 rounded-lg"
+            >
+              Confirm and Save
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+    </div>
+  );
+};
+
+export default BookEntry;
